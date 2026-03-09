@@ -69,6 +69,11 @@ on:
         required: false
         type: string
         default: ''
+      localversion:
+        description: 'Custom kernel LOCALVERSION string (e.g. -my-build). Leave empty to auto-generate from android version and device uname.'
+        required: false
+        type: string
+        default: ''
 
 jobs:
   set-op-model:
@@ -420,6 +425,7 @@ jobs:
           susfs_commit_hash_or_branch: ${{ steps.susfs.outputs.susfs_branch }}
           optimize_level: ${{ inputs.optimize_level }}
           clean: ${{ inputs.clean_build }}
+          localversion: ${{ inputs.localversion }}
 
       - name: 📊 Build statistics
         id: build-stat
