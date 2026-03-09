@@ -30,8 +30,8 @@ on:
           - android12-5.10
         default: OOS14+15+16
       ksu_options:
-        description: 'Enter KernelSU build json'
-        required: true
+        description: 'KernelSU build json (leave empty to disable KernelSU)'
+        required: false
         type: string
         default: '[{"type":"ksun","hash":"dev"}]'
       optimize_level:
@@ -154,7 +154,14 @@ jobs:
           fi
           
           # For each device + each ksu option → one combined entry
-          merged_matrix=$(jq -n --argjson devices "$filtered" --argjson ksu_list "$ksu_options_normalized" '[ $devices[] as $dev | $ksu_list[] as $ksu | ($dev + {ksu_type: $ksu.type, ksu_hash: $ksu.hash}) ]')
+          if [ -z "$ksu_options_raw" ]; then
+          merged_matrix=$(jq -n --argjson devices "$filtered" '[ $devices[] ]')
+          else
+            merged_matrix=$(jq -n \
+              --argjson devices "$filtered" \
+              --argjson ksu_list "$ksu_options_normalized" \
+              '[ $devices[] as $dev | $ksu_list[] as $ksu | ($dev + {ksu_type: $ksu.type, ksu_hash: $ksu.hash}) ]')
+          fi
           
           final_count=$(echo "$merged_matrix" | jq -s length)
           
@@ -252,7 +259,7 @@ jobs:
           fi
 
   build:
-    name: build (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ matrix.os_version }}, ${{ matrix.ksu_type }})
+    name: build (${{ matrix.model }}, ${{ matrix.android_version }}-${{ matrix.kernel_version }})
     needs: set-op-model
     runs-on: ubuntu-latest
     strategy:
@@ -384,10 +391,11 @@ jobs:
       - name: 🔨 Build Kernel
         id: build
         uses: ./.github/actions
+        uses: ./.github/actions
         with:
           op_config_json: ${{ steps.prepare_config.outputs.config_json }}
-          ksu_type: ${{ matrix.ksu_type }}
-          ksu_branch_or_hash: ${{ matrix.ksu_hash }}
+          ksu_type: ${{ matrix.ksu_type || '' }}
+          ksu_branch_or_hash: ${{ matrix.ksu_hash || '' }}
           susfs_commit_hash_or_branch: ${{ steps.susfs.outputs.susfs_branch }}
           optimize_level: ${{ inputs.optimize_level }}
           clean: ${{ inputs.clean_build }}
@@ -412,15 +420,25 @@ jobs:
             echo ""
             echo "Outputs:"
             echo "  - Kernel: ${{ steps.build.outputs.kernel_version }}"
-            if [ "${{ matrix.ksu_type }}" = "KSUN" ]; then
-              echo "  - KSU Next: v${{ steps.build.outputs.ksu_version }}"
-              echo "ksun_ver=${{ steps.build.outputs.ksu_version }}" >> "$GITHUB_OUTPUT"
-              echo "ksu_ver=" >> "$GITHUB_OUTPUT"
-            else
-              echo "  - KSU: v${{ steps.build.outputs.ksu_version }}"
-              echo "ksun_ver=" >> "$GITHUB_OUTPUT"
-              echo "ksu_ver=${{ steps.build.outputs.ksu_version }}" >> "$GITHUB_OUTPUT"
-            fi
+            case "${{ matrix.ksu_type }}" in
+              KSUN)
+                echo "  - KernelSU Next: v${{ steps.build.outputs.ksu_version }}"
+                echo "ksun_ver=${{ steps.build.outputs.ksu_version }}" >> "$GITHUB_OUTPUT"
+                echo "ksu_ver=" >> "$GITHUB_OUTPUT"
+                ;;
+                
+              KSU)
+                echo "  - KernelSU: v${{ steps.build.outputs.ksu_version }}"
+                echo "ksun_ver=" >> "$GITHUB_OUTPUT"
+                echo "ksu_ver=${{ steps.build.outputs.ksu_version }}" >> "$GITHUB_OUTPUT"
+                ;;
+                
+              *)
+                echo "  - Root solution: none"
+                echo "ksun_ver=" >> "$GITHUB_OUTPUT"
+                echo "ksu_ver=" >> "$GITHUB_OUTPUT"
+                ;;
+            esac
             if [ "${{ matrix.susfs }}" = true ]; then
               echo "  - SUSFS: ${{ steps.build.outputs.susfs_version }}"
             fi
