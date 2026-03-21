@@ -39,6 +39,11 @@ inputs:
     required: false
     type: string
     default: ''
+  build_timestamp:
+    description: 'Custom kernel build timestamp shown in uname -a (e.g. "Mon Jan  1 00:00:00 UTC 2024"). Leave empty to use the current build time.'
+    required: false
+    type: string
+    default: ''
 
 outputs:
   kernel_version:
@@ -232,6 +237,15 @@ runs:
             errors+=("Input 'localversion' contains invalid characters. Allowed: letters, digits, -, ., _. Got: '$localversion'")
           elif [[ ${#localversion} -gt 64 ]]; then
             errors+=("Input 'localversion' too long. Maximum length: 64. Got: '$localversion'")
+          fi
+        fi
+
+        build_timestamp='${{ inputs.build_timestamp }}'
+        if [[ -n "$build_timestamp" ]]; then
+          if [[ ${#build_timestamp} -gt 128 ]]; then
+            errors+=("Input 'build_timestamp' too long. Maximum length: 128. Got: '$build_timestamp'")
+          elif [[ ! "$build_timestamp" =~ ^[A-Za-z0-9\ :+/.,_-]+$ ]]; then
+            errors+=("Input 'build_timestamp' contains invalid characters. Allowed: letters, digits, spaces, and :+/.,_-. Got: '$build_timestamp'")
           fi
         fi
 
@@ -1327,7 +1341,12 @@ runs:
         
         KERNEL_BUILD_DATE=$(date -u)
         export SOURCE_DATE_EPOCH=$COMMIT_TIMESTAMP
-        export KBUILD_BUILD_TIMESTAMP="$KERNEL_BUILD_DATE"
+        if [ -n "${{ inputs.build_timestamp }}" ]; then
+          export KBUILD_BUILD_TIMESTAMP="${{ inputs.build_timestamp }}"
+          echo "📅 Using custom build timestamp: $KBUILD_BUILD_TIMESTAMP"
+        else
+          export KBUILD_BUILD_TIMESTAMP="$KERNEL_BUILD_DATE"
+        fi
         export KBUILD_BUILD_USER="${BUILD_USER:-kernel}"
         export KBUILD_BUILD_HOST="${BUILD_HOST:-kleaf}"
         export KBUILD_BUILD_VERSION=1

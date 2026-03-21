@@ -69,6 +69,11 @@ on:
         required: false
         type: string
         default: ''
+      build_timestamp:
+        description: 'Custom kernel build timestamp shown in uname -a (e.g. "Mon Jan  1 00:00:00 UTC 2024"). Leave empty to use the current build time.'
+        required: false
+        type: string
+        default: ''
       specific_manifest:
         description: 'Build only specific manifest(s), e.g. oneplus_13_w.xml (comma-separated for multiple). Overrides op_model filter when set.'
         required: false
@@ -427,6 +432,7 @@ jobs:
           optimize_level: ${{ inputs.optimize_level }}
           clean: ${{ inputs.clean_build }}
           localversion: ${{ inputs.localversion }}
+          build_timestamp: ${{ inputs.build_timestamp }}
 
       - name: 📊 Build statistics
         id: build-stat
