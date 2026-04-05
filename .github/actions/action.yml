@@ -6,12 +6,14 @@ inputs:
     required: true
     type: string
   ksu_type:
-    description: 'Select KSU Type'
-    required: true
+    description: 'Select KSU Type (KSUN, KSU, or NONE for vanilla kernel without KernelSU)'
+    required: false
     type: choice
     options:
       - KSUN
       - KSU
+      - NONE
+    default: NONE
   ksu_branch_or_hash:
     description: 'KSU branch or commit hash (empty = auto-detect by ksu_type)'
     required: false
@@ -687,7 +689,7 @@ runs:
         
         ANYKERNEL_BRANCH="gki-2.0"
         
-        if [ "${{ env.OP_SUSFS }}" = true ]; then
+        if [ "${{ env.OP_SUSFS }}" = true ] && [ "${{ inputs.ksu_type }}" != "NONE" ]; then
           # Determine SUSFS branch/commit to use
           SUSFS_INPUT="${{ inputs.susfs_commit_hash_or_branch }}"
           
@@ -715,7 +717,7 @@ runs:
         
         echo "Using AnyKernel3 branch: $ANYKERNEL_BRANCH"
         
-        if [ "${{ env.OP_SUSFS }}" = true ]; then
+        if [ "${{ env.OP_SUSFS }}" = true ] && [ "${{ inputs.ksu_type }}" != "NONE" ]; then
           echo "Using SUSFS branch/commit: $SUSFS_BRANCH"
         fi
         
@@ -754,7 +756,7 @@ runs:
         retry_clone "https://github.com/TheWildJames/AnyKernel3.git" "$ANYKERNEL_BRANCH"
         retry_clone "https://github.com/TheWildJames/kernel_patches.git"
         
-        if [ "${{ env.OP_SUSFS }}" = true ]; then
+        if [ "${{ env.OP_SUSFS }}" = true ] && [ "${{ inputs.ksu_type }}" != "NONE" ]; then
           retry_clone "https://gitlab.com/simonpunk/susfs4ksu.git" "master" 0
           
           cd susfs4ksu
@@ -897,7 +899,7 @@ runs:
 
     - name: Apply SUSFS Patches
       shell: bash
-      if: ${{ env.OP_SUSFS == 'true' }}
+      if: ${{ env.OP_SUSFS == 'true' && inputs.ksu_type != 'NONE' }}
       run: |
         set -euo pipefail
         echo "::group::Apply SUSFS patches"
@@ -1351,9 +1353,15 @@ runs:
         echo "Save Build Metadata"
         cd "$ARTIFACTS_FOLDER"
         echo "kernel_version=${{ env.KERNEL_FULL_VER }}" >> "$GITHUB_OUTPUT"
-        echo "ksu_version=${KSUVER:-unknown}" >> "$GITHUB_OUTPUT"
+        if [ "${{ inputs.ksu_type }}" != "NONE" ]; then
+          echo "ksu_version=${KSUVER:-unknown}" >> "$GITHUB_OUTPUT"
+        else
+          echo "ksu_version=" >> "$GITHUB_OUTPUT"
+          echo "NONE" >> "${OP_MODEL}_${OP_OS_VERSION}.txt"
+          echo "" >> "${OP_MODEL}_${OP_OS_VERSION}.txt"
+        fi
         echo "ksu_type=${{ inputs.ksu_type }}" >> "$GITHUB_OUTPUT"
-        if [ "${{ env.OP_SUSFS }}" = true ]; then
+        if [ "${{ env.OP_SUSFS }}" = true ] && [ "${{ inputs.ksu_type }}" != "NONE" ]; then
           echo "susfs_version=${SUSVER:-unknown}" >> "$GITHUB_OUTPUT"
         fi
 
@@ -1733,7 +1741,9 @@ runs:
         mv "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt" "$AK3_FOLDER/"
         cd "$AK3_FOLDER"
         
-        if [ "${{ env.OP_SUSFS }}" = true ]; then
+        if [ "${{ inputs.ksu_type }}" = "NONE" ]; then
+          ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_Vanilla.zip"
+        elif [ "${{ env.OP_SUSFS }}" = true ]; then
           ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER:-unknown}_SuSFS_${SUSVER:-unknown}.zip"
         else
           ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER:-unknown}.zip"
@@ -1788,11 +1798,13 @@ runs:
           if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
             echo "KSUN Version: ${KSUVER:-unknown}"
             echo "KSUN commit SHA: ${KSU_SHA:-unknown}"
-          else
+          elif [ "${{ inputs.ksu_type }}" = "KSU" ]; then
             echo "KSU Version: ${KSUVER:-unknown}"
             echo "KSU commit SHA: ${KSU_SHA:-unknown}"
+          else
+            echo "KernelSU: Not included (vanilla kernel)"
           fi
-          if [ "${{ env.OP_SUSFS }}" = true ]; then
+          if [ "${{ env.OP_SUSFS }}" = true ] && [ "${{ inputs.ksu_type }}" != "NONE" ]; then
             echo "SUSFS Version: ${SUSVER:-unknown}"
             echo "SUSFS Branch: ${{ env.SUSFS_BRANCH_NAME }}"
             echo "SUSFS commit SHA: $SUSFS_SHA"
@@ -1834,21 +1846,21 @@ runs:
           echo "| **Build Host** | ${{ env.BUILD_HOST }} |"
           if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
             echo "| **KSUN Version** | ${KSUVER:-unknown} |"
-          else
+          elif [ "${{ inputs.ksu_type }}" = "KSU" ]; then
             echo "| **KSU Version** | ${KSUVER:-unknown} |"
+          else
+            echo "| **KernelSU** | ❌ Not included (vanilla) |"
           fi
           
-          if [ "$KSU_SHA" != "unknown" ]; then
+          if [ "${{ inputs.ksu_type }}" != "NONE" ] && [ "$KSU_SHA" != "unknown" ]; then
             if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
               echo "| **KSUN Commit** | [\`${KSU_SHA:0:8}\`](https://github.com/KernelSU-Next/KernelSU-Next/commit/$KSU_SHA) |"
             else
               echo "| **KSU Commit** | [\`${KSU_SHA:0:8}\`](https://github.com/tiann/KernelSU/commit/$KSU_SHA) |"
             fi
-          else
-            echo "| **KSU Commit** | unknown |"
           fi
           
-          if [ "${{ env.OP_SUSFS }}" = true ]; then
+          if [ "${{ env.OP_SUSFS }}" = true ] && [ "${{ inputs.ksu_type }}" != "NONE" ]; then
             echo "| **SUSFS Version** | ${SUSVER:-unknown} |"
             echo "| **SUSFS Branch** | \`${{ env.SUSFS_BRANCH_NAME }}\` |"
             
