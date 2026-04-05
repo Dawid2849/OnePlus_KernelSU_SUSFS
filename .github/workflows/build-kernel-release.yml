@@ -902,7 +902,7 @@ jobs:
           - **Magic Mount Support** - Seamless file system modifications
           EOF
           fi
-          if [ "$ksu_type" == "KSUN" ] && [ "${ksu_ver_global:-0}" -lt 12884 ]; then
+          if [ "$ksu_type" != "NONE" ] && [ "${ksu_ver_global:-0}" -lt 12884 ]; then
             cat << EOF >> release_notes.md
           - **Manual Hooks** - scope_min_manual_hooks_v1.4 for better compatibility
           EOF

@@ -1357,6 +1357,7 @@ runs:
           echo "ksu_version=${KSUVER:-unknown}" >> "$GITHUB_OUTPUT"
         else
           echo "ksu_version=" >> "$GITHUB_OUTPUT"
+          # Write type and version placeholder for vanilla kernel (no KernelSU)
           echo "NONE" >> "${OP_MODEL}_${OP_OS_VERSION}.txt"
           echo "" >> "${OP_MODEL}_${OP_OS_VERSION}.txt"
         fi
