@@ -13,11 +13,11 @@
   "rust_build": false,
   "disk_cleanup": false,
   "hmbird": true,
-  "susfs": true,
+  "susfs": false,
   "bbg": true,
   "bbr": true,
   "ttl": true,
   "ip_set": true,
   "unicode": true,
-  "uname": "OP-WILD"
+  "uname": "8-g97a9aaefab9a-ab14519050-4k"
 }
