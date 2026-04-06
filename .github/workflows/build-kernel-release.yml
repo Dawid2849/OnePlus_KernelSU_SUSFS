@@ -30,8 +30,8 @@ on:
           - android12-5.10
         default: OOS14+15+16
       ksu_options:
-        description: 'Enter KernelSU build json'
-        required: true
+        description: 'Enter KernelSU build json (use [{"type":"none"}] to build without KernelSU)'
+        required: false
         type: string
         default: '[{"type":"ksun","hash":"dev"}]'
       optimize_level:
@@ -100,7 +100,10 @@ jobs:
           
           input="${{ github.event.inputs.op_model }}"
           ksu_options_raw='${{ github.event.inputs.ksu_options }}'
-          if ! ksu_options_normalized=$(echo "$ksu_options_raw" | jq -c 'map(if .type then .type |= ascii_upcase | if .hash == null then if .type == "KSUN" then .hash = "dev" elif .type == "KSU" then .hash = "main" else .hash end else . end else error("No type found") end)' 2>&1); then
+          if [ -z "$ksu_options_raw" ]; then
+            ksu_options_raw='[{"type":"none"}]'
+          fi
+          if ! ksu_options_normalized=$(echo "$ksu_options_raw" | jq -c 'map(if .type then .type |= ascii_upcase | if .hash == null then if .type == "KSUN" then .hash = "dev" elif .type == "KSU" then .hash = "main" else . end else . end else error("No type found") end)' 2>&1); then
             echo "::error::ksu_options validation failed: $ksu_options_normalized"
             exit 1
           fi
@@ -177,13 +180,18 @@ jobs:
           echo "✅ Found $final_count device(s) to build"
           echo ""
           echo "Selected devices:"
-          jq -r '.[] | "  - \(.model) (\(.os_version), \(.android_version)-\(.kernel_version), \(.ksu_type) - \(.ksu_hash))"' <<<"$merged_matrix"
+          jq -r '.[] | "  - \(.model) (\(.os_version), \(.android_version)-\(.kernel_version), \(.ksu_type)\(if .ksu_type == "NONE" then "" else " - " + (.ksu_hash // "auto") end))"' <<<"$merged_matrix"
           
           echo "count=$count" >> "$GITHUB_OUTPUT"
           
           ksu_type=$(echo "$ksu_options_normalized" | jq -r '.[0].type')
           ksu_ref=$(echo "$ksu_options_normalized" | jq -r '.[0].hash')
           
+          if [ "$ksu_type" == "NONE" ]; then
+            echo "  ℹ️  Vanilla kernel selected - skipping KSU hash resolution"
+            echo "ksu_resolved_hash=" >> "$GITHUB_OUTPUT"
+            merged_matrix=$(echo "$merged_matrix" | jq 'map(.ksu_resolved_hash = "")')
+          else
           if [ "$ksu_type" == "KSUN" ]; then
             KSU_REPO_OWNER="KernelSU-Next"
             KSU_REPO_NAME="KernelSU-Next"
@@ -240,6 +248,7 @@ jobs:
           
           # Inject ksu_resolved_hash into each device in the matrix
           merged_matrix=$(echo "$merged_matrix" | jq  --arg resolved_sha "$resolved_sha" 'map(.ksu_resolved_hash = $resolved_sha)')
+          fi
           
           # SUSFS hash fetch
           SUSFS_REPO="https://gitlab.com/simonpunk/susfs4ksu.git"
@@ -415,6 +424,8 @@ jobs:
             else
               ksu_display+="🔀 \`$ksu_type\`, \`$ksu_ref\` (\`${{ steps.set-matrix.outputs.ksu_resolved_hash }}\`)"
             fi
+          else
+            ksu_display+="⚠️ NONE (vanilla kernel - no KernelSU)"
           fi
           
           {
@@ -605,10 +616,14 @@ jobs:
               echo "  - KSU Next: v${{ steps.build.outputs.ksu_version }}"
               echo "ksun_ver=${{ steps.build.outputs.ksu_version }}" >> "$GITHUB_OUTPUT"
               echo "ksu_ver=" >> "$GITHUB_OUTPUT"
-            else
+            elif [ "${{ matrix.ksu_type }}" = "KSU" ]; then
               echo "  - KSU: v${{ steps.build.outputs.ksu_version }}"
               echo "ksun_ver=" >> "$GITHUB_OUTPUT"
               echo "ksu_ver=${{ steps.build.outputs.ksu_version }}" >> "$GITHUB_OUTPUT"
+            else
+              echo "  - No KernelSU (vanilla kernel)"
+              echo "ksun_ver=" >> "$GITHUB_OUTPUT"
+              echo "ksu_ver=" >> "$GITHUB_OUTPUT"
             fi
             if [ "${{ matrix.susfs }}" = true ]; then
               echo "  - SUSFS: ${{ steps.build.outputs.susfs_version }}"
@@ -657,9 +672,13 @@ jobs:
               cat >> $GITHUB_STEP_SUMMARY << EOF
           | **KSU Next** | v${{ steps.build.outputs.ksu_version }} |
           EOF
-            else
+            elif [ "${{ matrix.ksu_type }}" = "KSU" ]; then
               cat >> $GITHUB_STEP_SUMMARY << EOF
           | **KSU** | v${{ steps.build.outputs.ksu_version }} |
+          EOF
+            else
+              cat >> $GITHUB_STEP_SUMMARY << EOF
+          | **KernelSU** | ❌ Not included (vanilla) |
           EOF
             fi
             
@@ -898,8 +917,7 @@ jobs:
           EOF
           else
             cat << EOF >> release_notes.md
-          | **Unknown KernelSU Fork Branch** | \`\` |
-          | **Unknown KernelSU Fork Version** | \`\` |
+          | **KernelSU** | ❌ Not included (vanilla kernel) |
           EOF
           fi
           cat << EOF >> release_notes.md
@@ -930,16 +948,22 @@ jobs:
             cat << EOF >> release_notes.md
           - **KernelSU** - Kernel-level root solution
           EOF
+          else
+            cat << EOF >> release_notes.md
+          - ⚠️ **No KernelSU** - Vanilla kernel (no root management included)
+          EOF
           fi
-          cat << EOF >> release_notes.md
+          if [ "$ksu_type" != "NONE" ]; then
+            cat << EOF >> release_notes.md
           - **SUSFS $SUSFS_BASE_VERSION** - Advanced hiding and security features
           EOF
+          fi
           if [ "$ksu_type" == "KSUN" ] && [ "${ksu_ver_global:-0}" -lt 12884 ]; then
             cat << EOF >> release_notes.md
           - **Magic Mount Support** - Seamless file system modifications
           EOF
           fi
-          if [ "${ksu_ver_global:-0}" -lt 12884 ]; then
+          if [ "$ksu_type" != "NONE" ] && [ "${ksu_ver_global:-0}" -lt 12884 ]; then
             cat << EOF >> release_notes.md
           - **Manual Hooks** - scope_min_manual_hooks_v1.4 for better compatibility
           EOF
@@ -947,6 +971,9 @@ jobs:
           cat << EOF >> release_notes.md
           ### 🛡️ Security & Privacy
           - **Baseband Guard (BBG)** - LSM-based baseband security
+          EOF
+          if [ "$ksu_type" != "NONE" ]; then
+            cat << EOF >> release_notes.md
           - **SUSFS Hide Features**:
             - ✅ SUS_PATH - Hide suspicious paths
             - ✅ SUS_MOUNT - Hide mount points (No Cli Support)
@@ -956,6 +983,9 @@ jobs:
             - ✅ OPEN_REDIRECT - File access redirection
             - ✅ SUS_MAP - Memory mapping protection
             - ✅ AVC_SPOOF - Spoof Procfs avc denial logs
+          EOF
+          fi
+          cat << EOF >> release_notes.md
           - **Ptrace Leak Fix** - For kernels < 5.16
           - **Unicode Fix** - Prevent path traversal and other detections using non-printable Unicode codepoints [Experimental]
           
@@ -988,6 +1018,10 @@ jobs:
             cat << EOF >> release_notes.md
           - **KernelSU Manager**  
             → [GitHub Release](https://github.com/tiann/KernelSU/releases)
+          EOF
+          else
+            cat << EOF >> release_notes.md
+          - ⚠️ No KernelSU included - use Magisk or other root solutions separately
           EOF
           fi
           cat << EOF >> release_notes.md
