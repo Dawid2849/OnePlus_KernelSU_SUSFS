@@ -64,6 +64,11 @@ on:
         description: 'Enter SusFS Branch or commit hash for android16-6.12'
         type: string
         default: ''
+      specific_manifest:
+        description: 'Build only specific manifest(s), e.g. oneplus_13_w.xml (comma-separated for multiple). Overrides op_model filter when set.'
+        required: false
+        type: string
+        default: ''
 
 jobs:
   set-op-model:
@@ -157,16 +162,34 @@ jobs:
               echo "::warning::Unknown input '$input'. Using empty filter."
               jq_filter="map(select(false))"
               ;;
-          esac
+            esac
+          
+          # Override with specific manifest filter if provided
+          specific_manifest="${{ github.event.inputs.specific_manifest }}"
+          if [ -n "$specific_manifest" ]; then
+            # Split on commas, trim whitespace from each entry, build a JSON array
+            IFS=',' read -ra manifest_list <<< "$specific_manifest"
+            manifest_json=$(printf '%s\n' "${manifest_list[@]}" | sed 's/^ *//;s/ *$//' | jq -R . | jq -s .)
+            # Select configs whose .manifest field is in the JSON array
+            jq_filter="map(select(.manifest as \$m | ($manifest_json | index(\$m)) != null))"
+            echo "ℹ️  Specific manifest filter applied: $specific_manifest"
+          fi
           
           filtered=$(jq -c "$jq_filter" matrix.json)
           count=$(jq 'length' <<<"$filtered")
           
           if [ "$count" -eq 0 ]; then
-            echo "::error::No config files found for input '$input' after applying filters!"
-            echo ""
-            echo "Available configurations:"
-            jq -r '.[] | "  - \(.model) (\(.os_version), \(.android_version)-\(.kernel_version))"' matrix.json
+            if [ -n "$specific_manifest" ]; then
+              echo "::error::No config files found for manifest(s) '$specific_manifest'!"
+              echo ""
+              echo "Available manifests:"
+              jq -r '.[] | "  - \(.manifest) (\(.model), \(.os_version))"' matrix.json
+            else
+              echo "::error::No config files found for input '$input' after applying filters!"
+              echo ""
+              echo "Available configurations:"
+              jq -r '.[] | "  - \(.model) (\(.os_version), \(.android_version)-\(.kernel_version))"' matrix.json
+            fi
             exit 1
           fi
           
