@@ -34,6 +34,16 @@ on:
         required: true
         type: string
         default: '[{"type":"ksun","hash":"dev"}]'
+      enable_kernelsu:
+        description: 'Enable KernelSU/KernelSU Next integration'
+        required: true
+        type: boolean
+        default: true
+      enable_susfs:
+        description: 'Enable SUSFS integration'
+        required: true
+        type: boolean
+        default: true
       optimize_level:
         description: "Compiler optimization level"
         required: true
@@ -114,9 +124,16 @@ jobs:
           
           input="${{ github.event.inputs.op_model }}"
           ksu_options_raw='${{ github.event.inputs.ksu_options }}'
-          if ! ksu_options_normalized=$(echo "$ksu_options_raw" | jq -c 'map(if .type then .type |= ascii_upcase | if .hash == null then if .type == "KSUN" then .hash = "dev" elif .type == "KSU" then .hash = "main" else .hash end else . end else error("No type found") end)' 2>&1); then
-            echo "::error::ksu_options validation failed: $ksu_options_normalized"
-            exit 1
+          enable_ksu_input='${{ github.event.inputs.enable_kernelsu }}'
+          enable_susfs_input='${{ github.event.inputs.enable_susfs }}'
+          if [ "$enable_ksu_input" = "true" ]; then
+            if ! ksu_options_normalized=$(echo "$ksu_options_raw" | jq -c 'map(if .type then .type |= ascii_upcase | if .hash == null then if .type == "KSUN" then .hash = "dev" elif .type == "KSU" then .hash = "main" else .hash end else . end else error("No type found") end)' 2>&1); then
+              echo "::error::ksu_options validation failed: $ksu_options_normalized"
+              exit 1
+            fi
+          else
+            ksu_options_normalized='[{"type":"NONE","hash":""}]'
+            echo "ℹ️  KernelSU integration is disabled."
           fi
           
           echo "ksu_options_normalized=$ksu_options_normalized" >> $GITHUB_OUTPUT
@@ -188,6 +205,15 @@ jobs:
             exit 1
           fi
           
+          if [ "$enable_susfs_input" != "true" ] || [ "$enable_ksu_input" != "true" ]; then
+            filtered=$(echo "$filtered" | jq 'map(.susfs = false)')
+            if [ "$enable_susfs_input" != "true" ]; then
+              echo "ℹ️  SUSFS integration is disabled."
+            else
+              echo "ℹ️  SUSFS integration was disabled because KernelSU integration is disabled."
+            fi
+          fi
+          
           echo "$filtered" | jq '.' > matrix.json
           
           # For each device + each ksu option → one combined entry
@@ -205,58 +231,64 @@ jobs:
           ksu_type=$(echo "$ksu_options_normalized" | jq -r '.[0].type')
           ksu_ref=$(echo "$ksu_options_normalized" | jq -r '.[0].hash')
           
-          if [ "$ksu_type" == "KSUN" ]; then
-            KSU_REPO_OWNER="KernelSU-Next"
-            KSU_REPO_NAME="KernelSU-Next"
-          else
-            KSU_REPO_OWNER="tiann"
-            KSU_REPO_NAME="KernelSU"
-          fi
-          
-          HEAD_REF="refs/heads/${ksu_ref}"
-          TAG_REF="refs/tags/${ksu_ref}"
-          
-          QUERY='query($owner: String!, $name: String!, $headRef: String!, $tagRef: String!, $objRef: String!) {
-            repository(owner: $owner, name: $name) {
-              hb: ref(qualifiedName: $headRef) { t: target { ... on Commit { o: oid } } }
-              ht: ref(qualifiedName: $tagRef) { t: target { ... on Commit { o: oid } } }
-              ho: object(expression: $objRef) { ... on Commit { o: oid } }
-            }
-          }'
-          
-          MAX_RETRIES=3
-          RETRY_COUNT=0
-          RETRY_DELAY=5 # Seconds to wait between retries
-          
-          echo "Resolving $ksu_type hash ($ksu_ref)..."
-          
-          until [ $RETRY_COUNT -ge $MAX_RETRIES ]; do
-            RESULT=$(gh api graphql -f query="$QUERY" -f owner="$KSU_REPO_OWNER" -f name="$KSU_REPO_NAME" -f headRef="$HEAD_REF" -f tagRef="$TAG_REF" -f objRef="$ksu_ref" 2>/dev/null)
-            EXIT_CODE=$?
-            
-            if [ $EXIT_CODE -eq 0 ] && [ ! -z "$RESULT" ]; then
-              echo "  ✅ API Success"
-              break
+          if [ "$ksu_type" == "KSUN" ] || [ "$ksu_type" == "KSU" ]; then
+            if [ "$ksu_type" == "KSUN" ]; then
+              KSU_REPO_OWNER="KernelSU-Next"
+              KSU_REPO_NAME="KernelSU-Next"
+            else
+              KSU_REPO_OWNER="tiann"
+              KSU_REPO_NAME="KernelSU"
             fi
             
-            RETRY_COUNT=$((RETRY_COUNT + 1))
-            echo "::warning::API failed (Attempt $RETRY_COUNT/$MAX_RETRIES). Retrying in ${RETRY_DELAY}s..."
-            sleep $RETRY_DELAY
-          done
-          
-          if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
-            echo "::error::GitHub API unreachable. Cannot validate $ksu_ref"
-            exit 1
+            HEAD_REF="refs/heads/${ksu_ref}"
+            TAG_REF="refs/tags/${ksu_ref}"
+            
+            QUERY='query($owner: String!, $name: String!, $headRef: String!, $tagRef: String!, $objRef: String!) {
+              repository(owner: $owner, name: $name) {
+                hb: ref(qualifiedName: $headRef) { t: target { ... on Commit { o: oid } } }
+                ht: ref(qualifiedName: $tagRef) { t: target { ... on Commit { o: oid } } }
+                ho: object(expression: $objRef) { ... on Commit { o: oid } }
+              }
+            }'
+            
+            MAX_RETRIES=3
+            RETRY_COUNT=0
+            RETRY_DELAY=5 # Seconds to wait between retries
+            
+            echo "Resolving $ksu_type hash ($ksu_ref)..."
+            
+            until [ $RETRY_COUNT -ge $MAX_RETRIES ]; do
+              RESULT=$(gh api graphql -f query="$QUERY" -f owner="$KSU_REPO_OWNER" -f name="$KSU_REPO_NAME" -f headRef="$HEAD_REF" -f tagRef="$TAG_REF" -f objRef="$ksu_ref" 2>/dev/null)
+              EXIT_CODE=$?
+              
+              if [ $EXIT_CODE -eq 0 ] && [ ! -z "$RESULT" ]; then
+                echo "  ✅ API Success"
+                break
+              fi
+              
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              echo "::warning::API failed (Attempt $RETRY_COUNT/$MAX_RETRIES). Retrying in ${RETRY_DELAY}s..."
+              sleep $RETRY_DELAY
+            done
+            
+            if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+              echo "::error::GitHub API unreachable. Cannot validate $ksu_ref"
+              exit 1
+            fi
+            
+            resolved_sha=$(echo "$RESULT" | jq -r '.data.repository | (.hb.t.o // .ht.t.o // .ho.o // "unknown")')
+            
+            if [ "$resolved_sha" == "unknown" ]; then
+              echo "::error::Ref/Hash '$ksu_ref' does not exist in $KSU_REPO_OWNER/$KSU_REPO_NAME"
+              exit 1
+            fi
+            
+            echo "  ✅ Resolved: $ksu_type/$ksu_ref → $resolved_sha"
+          else
+            resolved_sha=""
+            echo "ℹ️  Skipping KernelSU hash resolution (disabled)."
           fi
           
-          resolved_sha=$(echo "$RESULT" | jq -r '.data.repository | (.hb.t.o // .ht.t.o // .ho.o // "unknown")')
-          
-          if [ "$resolved_sha" == "unknown" ]; then
-            echo "::error::Ref/Hash '$ksu_ref' does not exist in $KSU_REPO_OWNER/$KSU_REPO_NAME"
-            exit 1
-          fi
-          
-          echo "  ✅ Resolved: $ksu_type/$ksu_ref → $resolved_sha"
           echo "ksu_resolved_hash=$resolved_sha" >> "$GITHUB_OUTPUT"
           
           # Inject ksu_resolved_hash into each device in the matrix
@@ -443,6 +475,8 @@ jobs:
             else
               ksu_display+="🔀 \`$ksu_type\`, \`$ksu_ref\` (\`${{ steps.set-matrix.outputs.ksu_resolved_hash }}\`)"
             fi
+          else
+            ksu_display+="🚫 disabled"
           fi
           
           build_ts_input="${{ inputs.build_timestamp }}"
@@ -464,6 +498,8 @@ jobs:
           
             echo "- KSU Config: $ksu_display"
             echo "- Build Timestamp: $build_ts_display"
+            echo "- KernelSU Enabled: ${{ inputs.enable_kernelsu && '✅ Yes' || '❌ No' }}"
+            echo "- SUSFS Enabled: ${{ inputs.enable_susfs && '✅ Yes' || '❌ No' }}"
           
             cat << 'EOF'
           - Optimization: ${{ inputs.optimize_level }}
@@ -722,10 +758,14 @@ jobs:
               echo "  - KSU Next: v${{ steps.build.outputs.ksu_version }}"
               echo "ksun_ver=${{ steps.build.outputs.ksu_version }}" >> "$GITHUB_OUTPUT"
               echo "ksu_ver=" >> "$GITHUB_OUTPUT"
-            else
+            elif [ "${{ matrix.ksu_type }}" = "KSU" ]; then
               echo "  - KSU: v${{ steps.build.outputs.ksu_version }}"
               echo "ksun_ver=" >> "$GITHUB_OUTPUT"
               echo "ksu_ver=${{ steps.build.outputs.ksu_version }}" >> "$GITHUB_OUTPUT"
+            else
+              echo "  - KSU: disabled"
+              echo "ksun_ver=" >> "$GITHUB_OUTPUT"
+              echo "ksu_ver=" >> "$GITHUB_OUTPUT"
             fi
             if [ "${{ matrix.susfs }}" = true ]; then
               echo "  - SUSFS: ${{ steps.build.outputs.susfs_version }}"
@@ -774,9 +814,13 @@ jobs:
               cat >> $GITHUB_STEP_SUMMARY << EOF
           | **KSU Next** | v${{ steps.build.outputs.ksu_version }} |
           EOF
-            else
+            elif [ "${{ matrix.ksu_type }}" = "KSU" ]; then
               cat >> $GITHUB_STEP_SUMMARY << EOF
           | **KSU** | v${{ steps.build.outputs.ksu_version }} |
+          EOF
+            else
+              cat >> $GITHUB_STEP_SUMMARY << EOF
+          | **KSU** | disabled |
           EOF
             fi
             
