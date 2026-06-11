@@ -2061,7 +2061,9 @@ runs:
             echo "| **KSU** | disabled |"
           fi
           
-          if [ "$KSU_SHA" != "unknown" ]; then
+          if [ "${{ inputs.ksu_type }}" = "NONE" ]; then
+            echo "| **KSU Commit** | disabled |"
+          elif [ "$KSU_SHA" != "unknown" ]; then
             if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
               echo "| **KSUN Commit** | [\`${KSU_SHA:0:8}\`](https://github.com/KernelSU-Next/KernelSU-Next/commit/$KSU_SHA) |"
             elif [ "${{ inputs.ksu_type }}" = "KSU" ]; then
@@ -2070,11 +2072,7 @@ runs:
               echo "| **KSU Commit** | disabled |"
             fi
           else
-            if [ "${{ inputs.ksu_type }}" = "NONE" ]; then
-              echo "| **KSU Commit** | disabled |"
-            else
-              echo "| **KSU Commit** | unknown |"
-            fi
+            echo "| **KSU Commit** | unknown |"
           fi
           
           if [ "${{ env.OP_SUSFS }}" = true ]; then

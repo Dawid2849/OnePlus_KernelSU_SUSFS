@@ -498,8 +498,8 @@ jobs:
           
             echo "- KSU Config: $ksu_display"
             echo "- Build Timestamp: $build_ts_display"
-            echo "- KernelSU Enabled: ${{ inputs.enable_kernelsu && '✅ Yes' || '❌ No' }}"
-            echo "- SUSFS Enabled: ${{ inputs.enable_susfs && '✅ Yes' || '❌ No' }}"
+            echo "- KernelSU Enabled: ${{ inputs.enable_kernelsu == true && '✅ Yes' || '❌ No' }}"
+            echo "- SUSFS Enabled: ${{ inputs.enable_susfs == true && '✅ Yes' || '❌ No' }}"
           
             cat << 'EOF'
           - Optimization: ${{ inputs.optimize_level }}
