@@ -1102,7 +1102,7 @@ jobs:
           fi
           cat << EOF >> release_notes.md
           
-          ### Recomended Flasher
+          ### Recommended Flasher
           - **Kernel Flasher** (Required for flashing AnyKernel3 zips and backups and OTA)  
             → [GitHub Release](https://github.com/fatalcoder524/KernelFlasher/releases)
           
