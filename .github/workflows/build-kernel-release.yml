@@ -33,7 +33,12 @@ on:
         description: 'Enter KernelSU build json (use [{"type":"none"}] to build without KernelSU)'
         required: false
         type: string
-        default: '[{"type":"ksun","hash":"dev"}]'
+        default: '[{"type":"none"}]'
+      enable_susfs:
+        description: 'Enable SUSFS (requires KernelSU/KernelSU Next)'
+        required: true
+        type: boolean
+        default: false
       optimize_level:
         description: "Compiler optimization level"
         required: true
@@ -202,6 +207,14 @@ jobs:
           
           # For each device + each ksu option → one combined entry
           merged_matrix=$(jq -n --argjson devices "$filtered" --argjson ksu_list "$ksu_options_normalized" '[ $devices[] as $dev | $ksu_list[] as $ksu | ($dev + {ksu_type: $ksu.type, ksu_hash: $ksu.hash}) ]')
+
+          if [ "${{ github.event.inputs.enable_susfs }}" != "true" ]; then
+            echo "ℹ️  Global SUSFS toggle disabled - forcing SUSFS off for all builds"
+            merged_matrix=$(echo "$merged_matrix" | jq 'map(.susfs = false)')
+          fi
+
+          # SUSFS cannot be applied on vanilla (NONE) builds
+          merged_matrix=$(echo "$merged_matrix" | jq 'map(if .ksu_type == "NONE" then .susfs = false else . end)')
           
           final_count=$(echo "$merged_matrix" | jq 'length')
           
@@ -381,29 +394,33 @@ jobs:
           
           # SUSFS_VERSION — only when releasing
           if [ "${{ inputs.make_release }}" = "true" ]; then
-            susfs_base_version="unknown"
-            for key in "${active_keys[@]}"; do
-              ver="${susfs_versions_per_key[$key]:-unknown}"
-              if [ "$ver" != "unknown" ]; then
-                susfs_base_version="$ver"
-                break
-              fi
-            done
-            
-            if [ "$susfs_base_version" = "unknown" ]; then
-              echo "::error::Could not extract SUSFS_VERSION from susfs.h for any active GKI key. Cannot proceed with release."
-              exit 1
-            fi
-            
-            # make_release=true: mismatch is a hard error — prevents wrong tag
-            for key in "${active_keys[@]}"; do
-              key_ver="${susfs_versions_per_key[$key]:-unknown}"
-              if [ "$key_ver" != "$susfs_base_version" ]; then
-                echo "::error::SUSFS version mismatch: '$key' has '$key_ver', expected '$susfs_base_version'. Align refs before releasing."
+            if [ "${#active_keys[@]}" -eq 0 ]; then
+              susfs_base_version="vanilla"
+            else
+              susfs_base_version="unknown"
+              for key in "${active_keys[@]}"; do
+                ver="${susfs_versions_per_key[$key]:-unknown}"
+                if [ "$ver" != "unknown" ]; then
+                  susfs_base_version="$ver"
+                  break
+                fi
+              done
+              
+              if [ "$susfs_base_version" = "unknown" ]; then
+                echo "::error::Could not extract SUSFS_VERSION from susfs.h for any active GKI key. Cannot proceed with release."
                 exit 1
               fi
-            done
-            
+              
+              # make_release=true: mismatch is a hard error — prevents wrong tag
+              for key in "${active_keys[@]}"; do
+                key_ver="${susfs_versions_per_key[$key]:-unknown}"
+                if [ "$key_ver" != "$susfs_base_version" ]; then
+                  echo "::error::SUSFS version mismatch: '$key' has '$key_ver', expected '$susfs_base_version'. Align refs before releasing."
+                  exit 1
+                fi
+              done
+            fi
+
             echo "susfs_base_version=$susfs_base_version" >> "$GITHUB_OUTPUT"
           fi
           
@@ -497,25 +514,29 @@ jobs:
           # Iterate only on the GKI versions present in this run
           IFS=',' read -ra active_keys_display \
             <<< "${{ steps.set-matrix.outputs.active_gki_keys }}"
-          
-          for key in "${active_keys_display[@]}"; do
-            value="${susfs_inputs[$key]:-}"
-            fetched_hash="${step_hashes[$key]:-unknown}"
+
+          if [ ${#active_keys_display[@]} -eq 0 ] || [ -z "${active_keys_display[0]}" ]; then
+            echo "- Disabled (vanilla or global SUSFS toggle off)" >> $GITHUB_STEP_SUMMARY
+          else
+            for key in "${active_keys_display[@]}"; do
+              value="${susfs_inputs[$key]:-}"
+              fetched_hash="${step_hashes[$key]:-unknown}"
+              
+              if [ -z "$value" ]; then
+                # Auto: no input > hash resolved by ls-remote
+                echo "- $key: 🔄 auto (\`$fetched_hash\`)" >> $GITHUB_STEP_SUMMARY
+              elif [[ "$value" =~ ^[0-9a-f]{40}$ ]]; then
+                # Manual 40-char hash > direct passthrough
+                echo "- $key: 📌 \`$value\`" >> $GITHUB_STEP_SUMMARY
+              else
+                # Branch name > show branch + resolved hash
+                echo "- $key: 🔀 \`$value\` (\`$fetched_hash\`)" >> $GITHUB_STEP_SUMMARY
+              fi
+            done
             
-            if [ -z "$value" ]; then
-              # Auto: no input > hash resolved by ls-remote
-              echo "- $key: 🔄 auto (\`$fetched_hash\`)" >> $GITHUB_STEP_SUMMARY
-            elif [[ "$value" =~ ^[0-9a-f]{40}$ ]]; then
-              # Manual 40-char hash > direct passthrough
-              echo "- $key: 📌 \`$value\`" >> $GITHUB_STEP_SUMMARY
-            else
-              # Branch name > show branch + resolved hash
-              echo "- $key: 🔀 \`$value\` (\`$fetched_hash\`)" >> $GITHUB_STEP_SUMMARY
-            fi
-          done
-          
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> **💡 Note:** Hashes are resolved at run time via API calls before builds start." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "> **💡 Note:** Hashes are resolved at run time via API calls before builds start." >> $GITHUB_STEP_SUMMARY
+          fi
           
           # Add OOS restriction note for android-kernel filters
           if [[ "${{ inputs.op_model }}" == android*-*.* ]]; then
@@ -774,7 +795,7 @@ jobs:
       REPO_NAME: ${{ github.event.repository.name }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       SUSFS_BASE_VERSION: ${{ needs.set-op-model.outputs.susfs_base_version }}
-      RELEASE_NAME: '*TEST BUILD* OnePlus Kernels With KernelSU Next & SUSFS ${{ needs.set-op-model.outputs.susfs_base_version }} *TEST BUILD*'
+      RELEASE_NAME: '*TEST BUILD* OnePlus Kernels ${{ needs.set-op-model.outputs.susfs_base_version }} *TEST BUILD*'
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v6
@@ -859,8 +880,13 @@ jobs:
           IFS=',' read -ra active_gki_keys \
             <<< "${{ needs.set-op-model.outputs.active_gki_keys }}"
           
+          susfs_enabled="false"
+          if [ ${#active_gki_keys[@]} -gt 0 ] && [ -n "${active_gki_keys[0]}" ]; then
+            susfs_enabled="true"
+          fi
+          
           cat << EOF > release_notes.md
-          # 🎯 OnePlus Kernels with KernelSU Next & SUSFS $SUSFS_BASE_VERSION
+          # 🎯 OnePlus Kernels (${ksu_type}) - ${susfs_enabled} SUSFS
           
           > **Build Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')  
           > **Build ID:** \`${{ github.run_id }}\`  
@@ -949,12 +975,18 @@ jobs:
           | **KernelSU** | ❌ Not included (vanilla kernel) |
           EOF
           fi
-          cat << EOF >> release_notes.md
+          if [ "$susfs_enabled" = "true" ]; then
+            cat << EOF >> release_notes.md
           | **SUSFS Version** | \`$SUSFS_BASE_VERSION\` |
+          EOF
+          fi
+          cat << EOF >> release_notes.md
           | **Optimization Level** | \`$OPTIMIZE_LEVEL\` |
           | **Clean Build** | $( [ "$CLEAN_BUILD" = "true" ] && echo "✅ Yes (no ccache)" || echo "❌ No (ccache enabled)" ) |
           | **Compiler** | Clang (version varies by device) |
-          
+          EOF
+          if [ "$susfs_enabled" = "true" ]; then
+            cat << EOF >> release_notes.md
           ### 📌 SUSFS Branch Mapping
           
           | Kernel Version | SUSFS Commit |
@@ -962,7 +994,9 @@ jobs:
           $(for key in "${active_gki_keys[@]}"; do
             echo "| $key | \`${susfs_map[$key]:-unknown}\` |"
           done)
-          
+          EOF
+          fi
+          cat << EOF >> release_notes.md
           ---
           
           ## ✨ Features & Capabilities
@@ -982,7 +1016,7 @@ jobs:
           - ⚠️ **No KernelSU** - Vanilla kernel (no root management included)
           EOF
           fi
-          if [ "$ksu_type" != "NONE" ]; then
+          if [ "$susfs_enabled" = "true" ]; then
             cat << EOF >> release_notes.md
           - **SUSFS $SUSFS_BASE_VERSION** - Advanced hiding and security features
           EOF
@@ -1001,7 +1035,7 @@ jobs:
           ### 🛡️ Security & Privacy
           - **Baseband Guard (BBG)** - LSM-based baseband security
           EOF
-          if [ "$ksu_type" != "NONE" ]; then
+          if [ "$susfs_enabled" = "true" ]; then
             cat << EOF >> release_notes.md
           - **SUSFS Hide Features**:
             - ✅ SUS_PATH - Hide suspicious paths
@@ -1059,8 +1093,14 @@ jobs:
             → [GitHub Release](https://github.com/WildKernels/Wild_KSU/releases)
           
           ### Required Module
+          EOF
+          if [ "$susfs_enabled" = "true" ]; then
+            cat << EOF >> release_notes.md
           - **KSU SUSFS Module** (Required for SUSFS features)  
             → [GitHub Release](https://github.com/sidex15/ksu_module_susfs/releases)
+          EOF
+          fi
+          cat << EOF >> release_notes.md
           
           ### Recomended Flasher
           - **Kernel Flasher** (Required for flashing AnyKernel3 zips and backups and OTA)  
@@ -1085,14 +1125,26 @@ jobs:
             d. If root access is from Apatch(any forks): Delete all files from /data/adb. This is to start fresh and reduce multiple root implementation detected by modules.
           4. Reboot system.
           5. Install KernelSU-Next/WildSU Manager.
+          EOF
+          if [ "$susfs_enabled" = "true" ]; then
+            cat << EOF >> release_notes.md
           6. Install SusFS module from manager.
+          EOF
+          fi
+          cat << EOF >> release_notes.md
           
           ---
           
           ## 📜 Changelog
           
           ### This Release
+          EOF
+          if [ "$susfs_enabled" = "true" ]; then
+            cat << EOF >> release_notes.md
           - Updated SUSFS to $SUSFS_BASE_VERSION.
+          EOF
+          fi
+          cat << EOF >> release_notes.md
           - Added HMBIRD support for all SM8750/MT6991 devices.
           - Improved ccache build system.
           - Enhanced SUSFS hiding capabilities.

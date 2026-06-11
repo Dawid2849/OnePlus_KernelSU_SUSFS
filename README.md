@@ -92,6 +92,16 @@ You can also find Installation instructions in the release notes.
 
 ---
 
+## 🧪 GitHub Actions Build Modes
+
+- `ksu_options` now defaults to `[{\"type\":\"none\"}]` (vanilla build).
+- To build with KernelSU Next, use `[{\"type\":\"ksun\",\"hash\":\"dev\"}]`.
+- To build with KernelSU, use `[{\"type\":\"ksu\",\"hash\":\"main\"}]`.
+- `enable_susfs` controls whether SUSFS is included (default: disabled).
+- Vanilla builds still include all other kernel patches/features from each device config.
+
+---
+
 ## 🌟 Special Thanks
 
 **These amazing people help make this project possible! ❤️**
@@ -141,4 +151,3 @@ Any and all donations are appreciated!
 PayPal: [paypal.me/fatalcoder524](https://paypal.me/fatalcoder524)
 
 DM on Telegram for UPI donations!
-
