@@ -292,12 +292,17 @@ jobs:
               RESULT=$(gh api graphql -f query="$QUERY" -f owner="$KSU_REPO_OWNER" -f name="$KSU_REPO_NAME" -f headRef="$HEAD_REF" -f tagRef="$TAG_REF" -f objRef="$ksu_ref" 2>/dev/null)
               EXIT_CODE=$?
               
-              if [ $EXIT_CODE -eq 0 ] && [ ! -z "$RESULT" ]; then
+              if [ $EXIT_CODE -eq 0 ] && [ -n "$RESULT" ]; then
                 echo "  ✅ API Success"
                 break
               fi
               
-               resolved_sha=$(echo "$RESULT" | jq -r '.data.repository | (.hb.t.o // .ht.t.o // .ho.o // "unknown")')
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              echo "::warning::GitHub GraphQL API failed (Attempt $RETRY_COUNT/$MAX_RETRIES). Retrying..."
+              sleep $RETRY_DELAY
+            done
+            
+            resolved_sha=$(echo "$RESULT" | jq -r '.data.repository | (.hb.t.o // .ht.t.o // .ho.o // "unknown")')
             
             if [ "$resolved_sha" == "unknown" ]; then
               echo "::error::Ref/Hash '$ksu_ref' does not exist in $KSU_REPO_OWNER/$KSU_REPO_NAME"
